@@ -10,9 +10,9 @@ This project is a prompt-driven environment for building AI agents and automatio
 
 ## Setup
 
-The n8n-mcp server is configured in `.mcp.json` at the project root. Before building workflows, confirm the two required values are set:
-- `N8N_API_URL` — your n8n instance URL (e.g. `https://yourname.app.n8n.cloud`)
-- `N8N_API_KEY` — from n8n Settings → API → Create API Key
+The n8n-mcp server is configured in `.mcp.json` at the project root. Credentials are set:
+- **Instance:** `https://n8n-space-station.onrender.com`
+- **API key:** configured in `.mcp.json` (do not commit to version control)
 
 Run `n8n_health_check()` at the start of any session to verify the connection is live.
 
