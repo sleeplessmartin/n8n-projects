@@ -1,0 +1,182 @@
+{
+  "name": "HR Handbook RAG Chatbot",
+  "nodes": [
+    {
+      "id": "aa11bb22-cc33-4444-dd55-ee6677889900",
+      "name": "PIPELINE 1 — INGESTION",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 40],
+      "parameters": {
+        "width": 1100, "height": 580, "color": 3,
+        "content": "## 📥 PIPELINE 1 — INGESTION\n\nPOST a PDF to the **Webhook — Upload PDF** node to embed and store it in Qdrant.\nRun on-demand or replace the Webhook with a Schedule Trigger for batch processing.\n\n**To swap the document source:**\n- **Google Drive:** Replace Webhook with Google Drive Trigger + Google Drive Download\n- **Local / S3 files:** Use 'Read/Write Files from Disk' or HTTP Request\n- **Scheduled batch:** Schedule Trigger → loop over document URLs → HTTP Request → this pipeline\n\n**Chunking:** 800 chars / 150 overlap — keeps policy paragraphs intact; overlap preserves context at boundaries.\n\n**Vector store:** Qdrant — self-hostable via Docker, free cloud tier (1GB). For production, consider pgvector (Supabase) if you already run Postgres."
+      }
+    },
+    {
+      "id": "bb22cc33-dd44-5555-ee66-ff7788990011",
+      "name": "PIPELINE 2 — QUERY CHAT",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 680],
+      "parameters": {
+        "width": 1100, "height": 560, "color": 5,
+        "content": "## 💬 PIPELINE 2 — QUERY / CHAT\n\nEmployees ask questions via the n8n built-in Chat UI (zero extra infrastructure).\n\nFlow: question → embed → retrieve top-4 Qdrant chunks → GPT-4o-mini with strict system prompt → answer.\n\n**Testing:** Activate the workflow, then click the 'Chat' button in the n8n editor toolbar.\n**Intranet embedding:** In Chat Trigger → enable 'Make Chat Publicly Available' → copy the embed snippet.\n\n⚠️ **System prompt** (inside Q&A Chain node) restricts answers to handbook content only.\nWhen the handbook lacks an answer the bot says so and routes to hr@company.com / #hr-help Slack.\n\n**Top-k = 4:** Retrieves 4 chunks (~3,200 chars of context). Raise to 6-8 for longer handbooks; lower to 2-3 for precision."
+      }
+    },
+    {
+      "id": "cc33dd44-ee55-6666-ff77-aa8899001122",
+      "name": "Webhook — Upload PDF",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [180, 260],
+      "parameters": {
+        "path": "ingest-handbook",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": { "binaryData": true }
+      }
+    },
+    {
+      "id": "dd44ee55-ff66-7777-aa88-bb9900112233",
+      "name": "Qdrant — Insert Chunks",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [620, 260],
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": { "mode": "id", "value": "handbook_chunks" }
+      },
+      "credentials": { "qdrantApi": { "id": "", "name": "Qdrant account" } }
+    },
+    {
+      "id": "ee55ff66-aa77-8888-bb99-cc0011223344",
+      "name": "Embeddings OpenAI — Ingestion",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [500, 460],
+      "parameters": {},
+      "credentials": { "openAiApi": { "id": "", "name": "OpenAI account" } }
+    },
+    {
+      "id": "ff66aa77-bb88-9999-cc00-dd1122334455",
+      "name": "PDF Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentBinaryInputLoader",
+      "typeVersion": 1,
+      "position": [720, 460],
+      "parameters": { "loader": "pdfLoader", "binaryDataKey": "data", "splitPages": false }
+    },
+    {
+      "id": "aa77bb88-cc99-0000-dd11-ee2233445566",
+      "name": "Recursive Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [720, 580],
+      "parameters": { "chunkSize": 800, "chunkOverlap": 150 }
+    },
+    {
+      "id": "bb88cc99-dd00-1111-ee22-ff3344556677",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [980, 260],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Document ingested successfully into Qdrant collection 'handbook_chunks'."
+      }
+    },
+    {
+      "id": "cc99dd00-ee11-2222-ff33-aa4455667788",
+      "name": "Chat Trigger — Employee Question",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [180, 860],
+      "parameters": {
+        "public": true,
+        "mode": "hostedChat",
+        "authentication": "none",
+        "options": {
+          "title": "HR Handbook Assistant",
+          "subtitle": "Ask me anything about company policies and procedures",
+          "inputPlaceholder": "e.g. How many vacation days do I get per year?"
+        }
+      }
+    },
+    {
+      "id": "dd00ee11-ff22-3333-aa44-bb5566778899",
+      "name": "Q&A Chain — Handbook RAG",
+      "type": "@n8n/n8n-nodes-langchain.chainRetrievalQa",
+      "typeVersion": 1.7,
+      "position": [620, 860],
+      "parameters": {
+        "promptType": "auto",
+        "options": {
+          "systemMessage": "You are the HR Handbook Assistant for our company. Your ONLY knowledge source is the retrieved company handbook excerpts provided to you as context.\n\nRULES (follow strictly):\n1. Answer ONLY using the handbook excerpts provided. Never draw on outside knowledge.\n2. Quote or paraphrase the relevant policy section when possible to help employees find the source.\n3. If the handbook does not contain enough information to answer, respond with exactly: \"I couldn't find a clear answer to that in the handbook. For further help, please contact HR at hr@company.com or post in the #hr-help Slack channel.\"\n4. Keep answers concise, plain-language, and employee-friendly — avoid jargon.\n5. Never guess, invent, extrapolate, or fill gaps with general assumptions about typical company policy.\n6. If the question is off-topic (not a policy or HR question), politely redirect: \"That's outside my scope — I only cover company policies and the employee handbook.\""
+        }
+      }
+    },
+    {
+      "id": "ee11ff22-aa33-4444-bb55-cc6677889900",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [440, 1060],
+      "parameters": {
+        "model": { "mode": "id", "value": "gpt-4o-mini" },
+        "options": { "temperature": 0 }
+      },
+      "credentials": { "openAiApi": { "id": "", "name": "OpenAI account" } }
+    },
+    {
+      "id": "ff22aa33-bb44-5555-cc66-dd7788990011",
+      "name": "Qdrant — Retrieve Chunks",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [740, 1060],
+      "parameters": {
+        "mode": "retrieve",
+        "qdrantCollection": { "mode": "id", "value": "handbook_chunks" },
+        "topK": 4
+      },
+      "credentials": { "qdrantApi": { "id": "", "name": "Qdrant account" } }
+    },
+    {
+      "id": "aa33bb44-cc55-6666-dd77-ee8899001122",
+      "name": "Embeddings OpenAI — Query",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [740, 1200],
+      "parameters": {},
+      "credentials": { "openAiApi": { "id": "", "name": "OpenAI account" } }
+    }
+  ],
+  "connections": {
+    "Webhook — Upload PDF": {
+      "main": [[{ "node": "Qdrant — Insert Chunks", "type": "main", "index": 0 }]]
+    },
+    "Qdrant — Insert Chunks": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+    },
+    "Embeddings OpenAI — Ingestion": {
+      "ai_embedding": [[{ "node": "Qdrant — Insert Chunks", "type": "ai_embedding", "index": 0 }]]
+    },
+    "PDF Loader": {
+      "ai_document": [[{ "node": "Qdrant — Insert Chunks", "type": "ai_document", "index": 0 }]]
+    },
+    "Recursive Text Splitter": {
+      "ai_textSplitter": [[{ "node": "PDF Loader", "type": "ai_textSplitter", "index": 0 }]]
+    },
+    "Chat Trigger — Employee Question": {
+      "main": [[{ "node": "Q&A Chain — Handbook RAG", "type": "main", "index": 0 }]]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [[{ "node": "Q&A Chain — Handbook RAG", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Qdrant — Retrieve Chunks": {
+      "ai_retriever": [[{ "node": "Q&A Chain — Handbook RAG", "type": "ai_retriever", "index": 0 }]]
+    },
+    "Embeddings OpenAI — Query": {
+      "ai_embedding": [[{ "node": "Qdrant — Retrieve Chunks", "type": "ai_embedding", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
