@@ -9,6 +9,12 @@ This project enables rapid workflow creation through natural language:
 - **Live n8n integration** — Connect directly to your n8n instance via the n8n-mcp MCP server
 - **Expert knowledge** — Leverages specialized n8n skills for node configuration, expressions, code patterns, and validation
 
+## 📁 Project Structure
+
+- **`workflows/`** — Contains n8n workflow JSON files exported and managed within this project
+- **`.mcp.json`** — Configuration for the n8n-mcp MCP server
+- **`Claude.md`** — Documentation and setup guide for this project
+
 ## ⚙️ Configuration
 
 ### Prerequisites
