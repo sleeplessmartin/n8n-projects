@@ -1,0 +1,485 @@
+{
+  "name": "AI Job Application Automation",
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "Slack Trigger",
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "parameters": {
+        "trigger": ["message"],
+        "watchWorkspace": false,
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SLACK_CHANNEL_ID"
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "SLACK_CRED_ID",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "id": "n2",
+      "name": "Extract Job Title",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Ignore messages from bots or system events\nif ($input.item.json.bot_id || $input.item.json.subtype) {\n  return [];\n}\n\nconst text = ($input.item.json.text || '').trim();\n\n// Common intent patterns\nconst patterns = [\n  /(?:find|search|look(?:ing)?\\s+for)\\s+(?:jobs?\\s+(?:for|as)\\s+)?(.+?)(?:\\s+jobs?)?$/i,\n  /jobs?\\s+(?:for|as)\\s+(.+)$/i,\n  /looking\\s+for\\s+(.+?)\\s+(?:jobs?|positions?|roles?)/i\n];\n\nlet jobTitle = null;\nfor (const pattern of patterns) {\n  const match = text.match(pattern);\n  if (match) { jobTitle = match[1].trim(); break; }\n}\n\n// Fallback: short messages treated as direct job title input\nif (!jobTitle && text.length > 0 && text.length < 80 && text.split(' ').length <= 7) {\n  jobTitle = text;\n}\n\nreturn [{\n  json: {\n    jobTitle,\n    found: jobTitle !== null,\n    channel: $input.item.json.channel,\n    thread_ts: $input.item.json.ts\n  }\n}];"
+      }
+    },
+    {
+      "id": "n3",
+      "name": "Job Title Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [520, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "n4",
+      "name": "No Job Title Reply",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [780, 500],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.channel }}"
+        },
+        "text": "Hey there! I couldn't detect a job title in your message.\n\nHere are a few ways to phrase it:\n• *\"find jobs for Product Manager\"*\n• *\"UX Designer\"*\n• *\"looking for senior backend engineer\"*\n\nSend a new message with your target role and I'll start searching! :mag:",
+        "otherOptions": {
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $json.thread_ts }}"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "SLACK_CRED_ID",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "id": "n5",
+      "name": "Search Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 100],
+      "parameters": {
+        "method": "GET",
+        "url": "https://jsearch.p.rapidapi.com/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "query", "value": "={{ $json.jobTitle }}" },
+            { "name": "num_pages", "value": "1" },
+            { "name": "date_posted", "value": "today" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-RapidAPI-Key", "value": "RAPIDAPI_KEY_HERE" },
+            { "name": "X-RapidAPI-Host", "value": "jsearch.p.rapidapi.com" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n6",
+      "name": "Prepare Job List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 100],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first().json;\nconst jobs = (input.data || [])\n  .sort((a, b) => new Date(b.job_posted_at || 0) - new Date(a.job_posted_at || 0))\n  .slice(0, 5);\n\nif (jobs.length === 0) {\n  // Nothing found — signal will bubble up silently; add a Slack notify node if desired\n  return [];\n}\n\nreturn jobs.map(job => ({\n  json: {\n    job_title: job.job_title || 'Unknown Title',\n    employer_name: job.employer_name || 'Unknown Company',\n    job_city: job.job_city || job.job_country || 'Remote',\n    job_description: (job.job_description || '').slice(0, 4000),\n    job_apply_link: job.job_apply_link || '',\n    job_posted_at: job.job_posted_at || '',\n    job_source: job.job_source || '',\n    job_salary: job.job_min_salary\n      ? `${job.job_min_salary}-${job.job_max_salary} ${job.job_salary_currency || 'USD'}`\n      : 'Not listed'\n  }\n}));"
+      }
+    },
+    {
+      "id": "n7",
+      "name": "Get Resume Template",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1300, 100],
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "RESUME_TEMPLATE_FILE_ID"
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GDRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "id": "n8",
+      "name": "Merge Template Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 100],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Combine job data (from Prepare Job List) with the downloaded template text\nconst jobData = $('Prepare Job List').item.json;\nconst binaryData = $input.item.binary?.data;\n\nlet templateText = 'NO TEMPLATE LOADED. Set your resume template File ID in the Get Resume Template node.';\nif (binaryData?.data) {\n  try {\n    templateText = Buffer.from(binaryData.data, 'base64').toString('utf-8');\n  } catch (e) { /* keep placeholder */ }\n}\n\nreturn [{ json: { ...jobData, resumeTemplate: templateText } }];"
+      }
+    },
+    {
+      "id": "n9",
+      "name": "Generate Resume",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.1,
+      "position": [1820, 100],
+      "parameters": {
+        "resource": "chat",
+        "operation": "complete",
+        "chatModel": "gpt-4o",
+        "prompt": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are an expert resume writer specializing in ATS-optimized resumes. Rewrite the provided resume template to tailor it to the specific job posting. Preserve all factual information (work history, education, dates) but adjust phrasing, skill emphasis, and keyword density to match the job description. Output clean plain text only — no tables, no columns, no markdown. Use standard ATS section headers: SUMMARY, EXPERIENCE, SKILLS, EDUCATION. Be concise and professional."
+            },
+            {
+              "role": "user",
+              "content": "={{ 'Job Title: ' + $json.job_title + '\\nCompany: ' + $json.employer_name + '\\n\\nJob Description:\\n' + $json.job_description + '\\n\\n---\\n\\nResume Template to Tailor:\\n' + $json.resumeTemplate }}"
+            }
+          ]
+        },
+        "simplifyOutput": true,
+        "options": {
+          "maxTokens": 2000,
+          "temperature": 0.3
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "id": "n10",
+      "name": "Save Resume to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2080, 100],
+      "parameters": {
+        "resource": "file",
+        "operation": "createFromText",
+        "name": "={{ 'Resume - ' + $('Merge Template Data').item.json.job_title + ' - ' + $('Merge Template Data').item.json.employer_name + '.txt' }}",
+        "content": "={{ $json.message.content }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OUTPUT_FOLDER_ID"
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GDRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "id": "n11",
+      "name": "Is Upwork?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2340, 100],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-upwork",
+              "leftValue": "={{ $('Merge Template Data').item.json.job_apply_link }}",
+              "rightValue": "upwork.com",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "n12",
+      "name": "Generate Cover Letter",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.1,
+      "position": [2600, -20],
+      "parameters": {
+        "resource": "chat",
+        "operation": "complete",
+        "chatModel": "gpt-4o",
+        "prompt": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a professional freelancer writing Upwork proposals. Write a concise, personalized cover letter (150-200 words). Open by addressing their specific problem, highlight 1-2 relevant skills with brief evidence, and end with a clear call to action. No generic openers like 'I am writing to apply'. Output plain text only."
+            },
+            {
+              "role": "user",
+              "content": "={{ 'Job: ' + $('Merge Template Data').item.json.job_title + '\\nClient: ' + $('Merge Template Data').item.json.employer_name + '\\n\\nDescription:\\n' + $('Merge Template Data').item.json.job_description }}"
+            }
+          ]
+        },
+        "simplifyOutput": true,
+        "options": {
+          "maxTokens": 500,
+          "temperature": 0.5
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "id": "n13",
+      "name": "Save Cover Letter to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2860, -20],
+      "parameters": {
+        "resource": "file",
+        "operation": "createFromText",
+        "name": "={{ 'Cover Letter - ' + $('Merge Template Data').item.json.job_title + ' - ' + $('Merge Template Data').item.json.employer_name + '.txt' }}",
+        "content": "={{ $json.message.content }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OUTPUT_FOLDER_ID"
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GDRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "id": "n14",
+      "name": "Build Upwork Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3120, -20],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const job = $('Merge Template Data').item.json;\nconst resumeId = $('Save Resume to Drive').item.json.id;\nconst clId = $json.id; // cover letter file ID from current node (Save Cover Letter to Drive)\n\nreturn [{\n  json: {\n    job_title: job.job_title,\n    employer_name: job.employer_name,\n    job_city: job.job_city,\n    job_salary: job.job_salary,\n    job_description: job.job_description,\n    job_apply_link: job.job_apply_link,\n    job_posted_at: job.job_posted_at,\n    job_source: job.job_source,\n    resumeLink: `https://drive.google.com/file/d/${resumeId}/view`,\n    coverLetterLink: `https://drive.google.com/file/d/${clId}/view`\n  }\n}];"
+      }
+    },
+    {
+      "id": "n15",
+      "name": "Build Standard Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2600, 220],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const job = $('Merge Template Data').item.json;\nconst resumeId = $('Save Resume to Drive').item.json.id;\n\nreturn [{\n  json: {\n    job_title: job.job_title,\n    employer_name: job.employer_name,\n    job_city: job.job_city,\n    job_salary: job.job_salary,\n    job_description: job.job_description,\n    job_apply_link: job.job_apply_link,\n    job_posted_at: job.job_posted_at,\n    job_source: job.job_source,\n    resumeLink: `https://drive.google.com/file/d/${resumeId}/view`,\n    coverLetterLink: null\n  }\n}];"
+      }
+    },
+    {
+      "id": "n16",
+      "name": "Merge All Jobs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [3380, 100],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "n17",
+      "name": "Aggregate for Slack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3640, 100],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst channel = $('Extract Job Title').first().json.channel;\nconst thread_ts = $('Extract Job Title').first().json.thread_ts;\n\nlet msg = `*Found ${items.length} job match${items.length !== 1 ? 'es' : ''} — your tailored application kit is ready!*\\n\\n`;\n\nitems.forEach((item, i) => {\n  const j = item.json;\n  const files = [`<${j.resumeLink}|Tailored Resume>`];\n  if (j.coverLetterLink) {\n    files.push(`<${j.coverLetterLink}|Cover Letter (Upwork)>`);\n  }\n  msg += `*${i + 1}. ${j.job_title}* @ ${j.employer_name}\\n`;\n  msg += `Location: ${j.job_city} | Pay: ${j.job_salary}\\n`;\n  msg += `Posted: ${j.job_posted_at} | Source: ${j.job_source}\\n`;\n  msg += `<${j.job_apply_link}|Apply Here>  |  ${files.join('  |  ')}\\n`;\n  msg += `\\n_${(j.job_description || '').slice(0, 300).replace(/\\n/g, ' ')}..._\\n`;\n  if (i < items.length - 1) msg += `\\n---\\n\\n`;\n});\n\nreturn [{ json: { message: msg, channel, thread_ts } }];"
+      }
+    },
+    {
+      "id": "n18",
+      "name": "Post Job Summary",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [3900, 100],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.channel }}"
+        },
+        "text": "={{ $json.message }}",
+        "otherOptions": {
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $json.thread_ts }}"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "SLACK_CRED_ID",
+          "name": "Slack API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Slack Trigger": {
+      "main": [
+        [{ "node": "Extract Job Title", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Job Title": {
+      "main": [
+        [{ "node": "Job Title Found?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Job Title Found?": {
+      "main": [
+        [{ "node": "Search Jobs", "type": "main", "index": 0 }],
+        [{ "node": "No Job Title Reply", "type": "main", "index": 0 }]
+      ]
+    },
+    "Search Jobs": {
+      "main": [
+        [{ "node": "Prepare Job List", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Job List": {
+      "main": [
+        [{ "node": "Get Resume Template", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Resume Template": {
+      "main": [
+        [{ "node": "Merge Template Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "Merge Template Data": {
+      "main": [
+        [{ "node": "Generate Resume", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate Resume": {
+      "main": [
+        [{ "node": "Save Resume to Drive", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Resume to Drive": {
+      "main": [
+        [{ "node": "Is Upwork?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Upwork?": {
+      "main": [
+        [{ "node": "Generate Cover Letter", "type": "main", "index": 0 }],
+        [{ "node": "Build Standard Entry", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate Cover Letter": {
+      "main": [
+        [{ "node": "Save Cover Letter to Drive", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Cover Letter to Drive": {
+      "main": [
+        [{ "node": "Build Upwork Entry", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Upwork Entry": {
+      "main": [
+        [{ "node": "Merge All Jobs", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Standard Entry": {
+      "main": [
+        [{ "node": "Merge All Jobs", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge All Jobs": {
+      "main": [
+        [{ "node": "Aggregate for Slack", "type": "main", "index": 0 }]
+      ]
+    },
+    "Aggregate for Slack": {
+      "main": [
+        [{ "node": "Post Job Summary", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
