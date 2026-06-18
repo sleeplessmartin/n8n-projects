@@ -1,14 +1,20 @@
 # n8n Workflow Prompt — AI Job Application Automation
  
-You are an expert AI Automation Specialist. Design a complete n8n workflow based on the specification below.
+You are an expert AI Automation Specialist. Build a complete, working n8n workflow based on the specification below — don't just describe it.
  
-## Output requirements
+## Primary deliverable
  
-- Walk through the workflow node by node, in execution order. For each node, give it a clear name, state its node type (e.g. Slack Trigger, IF, HTTP Request, Google Drive, Code/Function, etc.), and explain what it does and how it's configured.
+- Output an importable n8n workflow JSON (nodes, connections, and parameters) that I can paste directly into n8n via **Import from Clipboard** and run with minimal setup.
+- Use correct, current n8n node types and a valid connection structure so the import doesn't break.
+
+## Supporting documentation
+ 
+- After the JSON, provide a node-by-node walkthrough in execution order. For each node, give its name, node type (e.g. Slack Trigger, IF, HTTP Request, Google Drive, Code/Function), what it does, and how it's configured.
 - Show how data passes between nodes (which fields/expressions feed the next step).
 - Where the spec is ambiguous or underspecified, state the assumption you're making and flag it clearly rather than guessing silently.
-- Call out anything I'll need to provide or set up myself (credentials, API keys, the job-search API's name and schema, the Google Drive template format, folder IDs).
+- List anything I'll need to set up myself: credentials, API keys, the job-search API's name and schema, the Google Drive template format, and folder IDs.
 - Note error-handling and edge cases where relevant.
+
 ## Workflow specification
  
 1. **Trigger:** A message is sent to a Slack channel. The workflow parses the message to detect a job title.
@@ -26,7 +32,8 @@ You are an expert AI Automation Specialist. Design a complete n8n workflow based
    - any other relevant info that makes it easy for me to apply quickly.
 7. Limit the Slack summary to at most 5 job listings.
 8. Always fetch the latest / most recent job postings.
+
 ## Constraints and preferences
  
-- Keep the explanation practical and implementation-ready — I want to be able to build this in n8n from your output.
+- Make the workflow practical and implementation-ready — importable and runnable, not pseudocode.
 - Be concise; avoid filler.
